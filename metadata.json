@@ -1,0 +1,7 @@
+{
+  "name": "Rain Control - Cyberpunk Gesture Simulation",
+  "description": "A high-performance 3D rain simulation controlled by hand gestures using MediaPipe and Three.js Shaders. Features cyberpunk aesthetics and physics-defying interactions.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

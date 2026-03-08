@@ -15,55 +15,83 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onHandUpdate, onReady }) => {
   useEffect(() => {
     if (!videoRef.current || !canvasRef.current) return;
 
-    const hands = new (window as any).Hands({
-      locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
-    });
+    // Set canvas dimensions to match video
+    canvasRef.current.width = 320;
+    canvasRef.current.height = 240;
 
-    hands.setOptions({
-      maxNumHands: 2,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-    });
+    // Wait for MediaPipe scripts to load
+    const waitForMediaPipe = (): Promise<void> => {
+      return new Promise((resolve) => {
+        const check = () => {
+          if ((window as any).Hands && (window as any).Camera) {
+            resolve();
+          } else {
+            setTimeout(check, 100);
+          }
+        };
+        check();
+      });
+    };
 
-    hands.onResults((results: any) => {
-      onHandUpdate(results.multiHandLandmarks ? results.multiHandLandmarks.length : 0);
+    let camera: any = null;
+    let hands: any = null;
 
-      if (canvasRef.current && results.multiHandLandmarks) {
-        const ctx = canvasRef.current.getContext('2d');
-        if (!ctx) return;
-        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        
-        results.multiHandLandmarks.forEach((landmarks: any) => {
-          ctx.strokeStyle = '#fbbf24'; // Amber-400
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          landmarks.forEach((pt: any, idx: number) => {
-            if (idx % 4 === 0) {
-               ctx.arc(pt.x * canvasRef.current!.width, pt.y * canvasRef.current!.height, 4, 0, Math.PI * 2);
-            }
-          });
-          ctx.stroke();
-        });
-      }
-    });
+    waitForMediaPipe().then(() => {
+      hands = new (window as any).Hands({
+        locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+      });
 
-    const camera = new (window as any).Camera(videoRef.current, {
-      onFrame: async () => {
-        await hands.send({ image: videoRef.current! });
-      },
-      width: 320,
-      height: 240,
-    });
+      hands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+      });
 
-    camera.start().then(() => {
-      setIsCameraActive(true);
-      onReady();
+      hands.onResults((results: any) => {
+        const count = results.multiHandLandmarks?.length ?? 0;
+        onHandUpdate(count);
+
+        if (canvasRef.current) {
+          const ctx = canvasRef.current.getContext('2d');
+          if (!ctx) return;
+          ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+
+          if (results.multiHandLandmarks) {
+            results.multiHandLandmarks.forEach((landmarks: any) => {
+              ctx.strokeStyle = '#fbbf24';
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              landmarks.forEach((pt: any, idx: number) => {
+                if (idx % 4 === 0) {
+                  ctx.arc(pt.x * canvasRef.current!.width, pt.y * canvasRef.current!.height, 4, 0, Math.PI * 2);
+                }
+              });
+              ctx.stroke();
+            });
+          }
+        }
+      });
+
+      camera = new (window as any).Camera(videoRef.current!, {
+        onFrame: async () => {
+          if (videoRef.current) {
+            await hands.send({ image: videoRef.current });
+          }
+        },
+        width: 320,
+        height: 240,
+      });
+
+      camera.start().then(() => {
+        setIsCameraActive(true);
+        onReady();
+      });
     });
 
     return () => {
-      camera.stop();
-      hands.close();
+      if (camera) camera.stop();
+      if (hands) hands.close();
     };
   }, [onHandUpdate, onReady]);
 

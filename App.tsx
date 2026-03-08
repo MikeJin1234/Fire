@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useMemo } from 'react';
 import RainCanvas from './components/RainCanvas';
 import HandTracker from './components/HandTracker';
 import HUD from './components/HUD';
@@ -11,16 +11,15 @@ const App: React.FC = () => {
   const [handCount, setHandCount] = useState(0);
   const modeRef = useRef<RainMode>(RainMode.NORMAL);
 
-  // Sync mode based on hand count
-  useEffect(() => {
-    if (handCount === 0) {
-      modeRef.current = RainMode.NORMAL;
-    } else if (handCount === 1) {
-      modeRef.current = RainMode.SUSPENDED;
-    } else if (handCount >= 2) {
-      modeRef.current = RainMode.REVERSE;
-    }
+  // Derive mode from handCount (computed during render, not in useEffect)
+  const currentMode = useMemo(() => {
+    if (handCount === 0) return RainMode.NORMAL;
+    if (handCount === 1) return RainMode.SUSPENDED;
+    return RainMode.REVERSE;
   }, [handCount]);
+
+  // Keep ref in sync for the animation loop
+  modeRef.current = currentMode;
 
   const handleTrackerReady = useCallback(() => {
     setIsLoaded(true);
@@ -29,17 +28,17 @@ const App: React.FC = () => {
   return (
     <div className="relative w-screen h-screen bg-black overflow-hidden select-none">
       {!isLoaded && <Loader />}
-      
+
       <RainCanvas modeRef={modeRef} />
-      
-      <HandTracker 
-        onHandUpdate={setHandCount} 
-        onReady={handleTrackerReady} 
+
+      <HandTracker
+        onHandUpdate={setHandCount}
+        onReady={handleTrackerReady}
       />
-      
-      <HUD 
-        handCount={handCount} 
-        currentMode={modeRef.current} 
+
+      <HUD
+        handCount={handCount}
+        currentMode={currentMode}
       />
 
       <div className="absolute bottom-4 left-4 text-amber-500/30 text-[10px] uppercase tracking-widest pointer-events-none">

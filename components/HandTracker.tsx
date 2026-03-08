@@ -43,7 +43,7 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onHandUpdate, onReady }) => {
       setStatus('INIT HANDS MODEL...');
       try {
         hands = new (window as any).Hands({
-          locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`,
+          locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
         });
 
         hands.setOptions({
@@ -61,7 +61,7 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onHandUpdate, onReady }) => {
           const count = landmarks?.length ?? 0;
           onHandUpdateRef.current(count);
 
-          if (resultCount <= 3 || resultCount % 30 === 0) {
+          if (resultCount <= 5 || resultCount % 30 === 0) {
             setStatus(`TRACKING [${count} hand${count !== 1 ? 's' : ''}] f:${resultCount}`);
           }
 
@@ -85,12 +85,28 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onHandUpdate, onReady }) => {
           }
         });
 
-        // 3. Init camera
+        // 3. Initialize the model (download WASM + model files)
+        setStatus('DOWNLOADING MODEL...');
+        await hands.initialize();
+        if (destroyed) return;
+        setStatus('MODEL READY');
+
+        // 4. Init camera
         setStatus('STARTING CAMERA...');
+        let sendCount = 0;
+        let sendErrors = 0;
         camera = new (window as any).Camera(videoRef.current!, {
           onFrame: async () => {
             if (!destroyed && videoRef.current && hands) {
-              await hands.send({ image: videoRef.current });
+              try {
+                sendCount++;
+                await hands.send({ image: videoRef.current });
+              } catch (err: any) {
+                sendErrors++;
+                if (sendErrors <= 3) {
+                  setStatus(`SEND ERR #${sendErrors}: ${err.message || err}`);
+                }
+              }
             }
           },
           width: 320,
@@ -99,7 +115,7 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onHandUpdate, onReady }) => {
 
         await camera.start();
         if (destroyed) return;
-        setStatus('CAMERA ACTIVE — WAITING FOR HANDS');
+        setStatus('CAMERA ACTIVE — DETECTING...');
         onReady();
       } catch (err: any) {
         setStatus(`ERR: ${err.message || err}`);

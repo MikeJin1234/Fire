@@ -10,97 +10,118 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onHandUpdate, onReady }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isMinimized, setIsMinimized] = useState(false);
-  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [status, setStatus] = useState<string>('INIT');
+  const onHandUpdateRef = useRef(onHandUpdate);
+  onHandUpdateRef.current = onHandUpdate;
 
   useEffect(() => {
     if (!videoRef.current || !canvasRef.current) return;
 
-    // Set canvas dimensions to match video
-    canvasRef.current.width = 320;
-    canvasRef.current.height = 240;
-
-    // Wait for MediaPipe scripts to load
-    const waitForMediaPipe = (): Promise<void> => {
-      return new Promise((resolve) => {
-        const check = () => {
-          if ((window as any).Hands && (window as any).Camera) {
-            resolve();
-          } else {
-            setTimeout(check, 100);
-          }
-        };
-        check();
-      });
-    };
+    const canvas = canvasRef.current;
+    canvas.width = 320;
+    canvas.height = 240;
 
     let camera: any = null;
     let hands: any = null;
+    let destroyed = false;
 
-    waitForMediaPipe().then(() => {
-      hands = new (window as any).Hands({
-        locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
-      });
-
-      hands.setOptions({
-        maxNumHands: 2,
-        modelComplexity: 1,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-      });
-
-      hands.onResults((results: any) => {
-        const count = results.multiHandLandmarks?.length ?? 0;
-        onHandUpdate(count);
-
-        if (canvasRef.current) {
-          const ctx = canvasRef.current.getContext('2d');
-          if (!ctx) return;
-          ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-
-          if (results.multiHandLandmarks) {
-            results.multiHandLandmarks.forEach((landmarks: any) => {
-              ctx.strokeStyle = '#fbbf24';
-              ctx.lineWidth = 2;
-              ctx.beginPath();
-              landmarks.forEach((pt: any, idx: number) => {
-                if (idx % 4 === 0) {
-                  ctx.arc(pt.x * canvasRef.current!.width, pt.y * canvasRef.current!.height, 4, 0, Math.PI * 2);
-                }
-              });
-              ctx.stroke();
-            });
-          }
+    const init = async () => {
+      // 1. Wait for MediaPipe CDN scripts
+      setStatus('LOADING MEDIAPIPE...');
+      const deadline = Date.now() + 15000;
+      while (!(window as any).Hands || !(window as any).Camera) {
+        if (Date.now() > deadline) {
+          setStatus('ERR: MEDIAPIPE LOAD TIMEOUT');
+          onReady();
+          return;
         }
-      });
+        await new Promise(r => setTimeout(r, 200));
+      }
+      if (destroyed) return;
 
-      camera = new (window as any).Camera(videoRef.current!, {
-        onFrame: async () => {
-          if (videoRef.current) {
-            await hands.send({ image: videoRef.current });
+      // 2. Init Hands
+      setStatus('INIT HANDS MODEL...');
+      try {
+        hands = new (window as any).Hands({
+          locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`,
+        });
+
+        hands.setOptions({
+          maxNumHands: 2,
+          modelComplexity: 1,
+          minDetectionConfidence: 0.4,
+          minTrackingConfidence: 0.4,
+        });
+
+        let resultCount = 0;
+        hands.onResults((results: any) => {
+          if (destroyed) return;
+          resultCount++;
+          const landmarks = results.multiHandLandmarks;
+          const count = landmarks?.length ?? 0;
+          onHandUpdateRef.current(count);
+
+          if (resultCount <= 3 || resultCount % 30 === 0) {
+            setStatus(`TRACKING [${count} hand${count !== 1 ? 's' : ''}] f:${resultCount}`);
           }
-        },
-        width: 320,
-        height: 240,
-      });
 
-      camera.start().then(() => {
-        setIsCameraActive(true);
+          if (canvas) {
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (landmarks) {
+              landmarks.forEach((lm: any) => {
+                ctx.fillStyle = '#fbbf24';
+                lm.forEach((pt: any, idx: number) => {
+                  if (idx % 4 === 0) {
+                    ctx.beginPath();
+                    ctx.arc(pt.x * canvas.width, pt.y * canvas.height, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                  }
+                });
+              });
+            }
+          }
+        });
+
+        // 3. Init camera
+        setStatus('STARTING CAMERA...');
+        camera = new (window as any).Camera(videoRef.current!, {
+          onFrame: async () => {
+            if (!destroyed && videoRef.current && hands) {
+              await hands.send({ image: videoRef.current });
+            }
+          },
+          width: 320,
+          height: 240,
+        });
+
+        await camera.start();
+        if (destroyed) return;
+        setStatus('CAMERA ACTIVE — WAITING FOR HANDS');
         onReady();
-      });
-    });
+      } catch (err: any) {
+        setStatus(`ERR: ${err.message || err}`);
+        onReady();
+      }
+    };
+
+    init();
 
     return () => {
-      if (camera) camera.stop();
-      if (hands) hands.close();
+      destroyed = true;
+      try { if (camera) camera.stop(); } catch {}
+      try { if (hands) hands.close(); } catch {}
     };
-  }, [onHandUpdate, onReady]);
+  }, []);
 
   return (
-    <div className={`fixed bottom-6 right-6 transition-all duration-500 ease-in-out z-40 
-      ${isMinimized ? 'w-12 h-12 overflow-hidden' : 'w-64 h-48'} 
+    <div className={`fixed bottom-6 right-6 transition-all duration-500 ease-in-out z-40
+      ${isMinimized ? 'w-12 h-12 overflow-hidden' : 'w-64 h-48'}
       bg-black border-2 border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.3)] rounded-lg group`}>
-      
-      <button 
+
+      <button
         onClick={() => setIsMinimized(!isMinimized)}
         className="absolute top-1 right-1 z-50 p-1 text-amber-500 hover:text-white transition-colors"
       >
@@ -118,19 +139,19 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onHandUpdate, onReady }) => {
           <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-amber-400 -m-1"></div>
           <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-amber-400 -m-1"></div>
           <div className="absolute -top-6 left-0 text-[10px] text-amber-500 font-mono tracking-tighter opacity-70">
-            KINETIC_FLOW_SENSOR // ACTIVE
+            KINETIC_FLOW_SENSOR // {status}
           </div>
         </>
       )}
 
-      <video 
-        ref={videoRef} 
-        className={`w-full h-full object-cover grayscale brightness-125 contrast-125 sepia-[0.3] ${isMinimized ? 'opacity-0' : 'opacity-100'}`} 
-        playsInline 
+      <video
+        ref={videoRef}
+        className={`w-full h-full object-cover grayscale brightness-125 contrast-125 sepia-[0.3] ${isMinimized ? 'opacity-0' : 'opacity-100'}`}
+        playsInline
       />
-      <canvas 
-        ref={canvasRef} 
-        className={`absolute inset-0 w-full h-full pointer-events-none ${isMinimized ? 'hidden' : 'block'}`} 
+      <canvas
+        ref={canvasRef}
+        className={`absolute inset-0 w-full h-full pointer-events-none ${isMinimized ? 'hidden' : 'block'}`}
       />
 
       {isMinimized && (
